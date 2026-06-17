@@ -54,23 +54,20 @@ function generateAuditId(): string {
   return `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function initTaskFields(task: ExamTask): ExamTask {
-  const storedAudit = loadAuditEventsForTask(task.taskId);
-  return {
-    ...task,
-    writeStatus: task.writeStatus ?? 'idle',
-    writeReceipt: task.writeReceipt ?? {
-      status: task.writeStatus ?? 'idle',
-      progress: 0,
-      retryCount: 0,
-    },
-    hasDraft: task.hasDraft ?? false,
-    auditEvents: storedAudit.length > 0 ? storedAudit : (task.auditEvents ?? []),
-  };
-}
-
 const DRAFT_LOCAL_STORAGE_KEY = 'radreview:drafts';
 const AUDIT_LOCAL_STORAGE_KEY = 'radreview:audit';
+
+function loadDraftMeta(taskId: string): { hasDraft: boolean; savedAt?: string } {
+  try {
+    const raw = localStorage.getItem(DRAFT_LOCAL_STORAGE_KEY);
+    if (!raw) return { hasDraft: false };
+    const all = JSON.parse(raw) as Record<string, { savedAt: string }>;
+    const meta = all[taskId];
+    return meta ? { hasDraft: true, savedAt: meta.savedAt } : { hasDraft: false };
+  } catch (_e) {
+    return { hasDraft: false };
+  }
+}
 
 function loadAuditEventsForTask(taskId: string): AuditEvent[] {
   try {
@@ -92,6 +89,23 @@ function persistAuditEventsForTask(taskId: string, events: AuditEvent[]): void {
   } catch (_e) {
     // ignore
   }
+}
+
+function initTaskFields(task: ExamTask): ExamTask {
+  const storedAudit = loadAuditEventsForTask(task.taskId);
+  const draftMeta = loadDraftMeta(task.taskId);
+  return {
+    ...task,
+    writeStatus: task.writeStatus ?? 'idle',
+    writeReceipt: task.writeReceipt ?? {
+      status: task.writeStatus ?? 'idle',
+      progress: 0,
+      retryCount: 0,
+    },
+    hasDraft: draftMeta.hasDraft || (task.hasDraft ?? false),
+    lastDraftSavedAt: draftMeta.savedAt ?? task.lastDraftSavedAt,
+    auditEvents: storedAudit.length > 0 ? storedAudit : (task.auditEvents ?? []),
+  };
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -217,7 +231,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   setTaskHasDraft: (taskId, savedAt) => {
     const time = savedAt ?? new Date().toISOString();
-    get().addAuditEvent(taskId, 'draft-saved', `草稿已保存于 ${time.slice(11, 19)}`);
     set((state) => ({
       tasks: state.tasks.map((t) =>
         t.taskId === taskId
@@ -348,6 +361,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set((state) => {
       const task = state.tasks.find((t) => t.taskId === taskId);
       if (!task || !task.writeReceipt) return {};
+      const now = new Date().toISOString();
       const retryCount = (task.writeReceipt.retryCount ?? 0) + 1;
       const receipt: PacsWriteReceipt = {
         ...task.writeReceipt,
@@ -355,10 +369,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         progress: task.writeReceipt.progress,
         retryCount,
         message,
+        completedAt: now,
       };
+      const durationMs = task.writeReceipt.startedAt
+        ? new Date(now).getTime() - new Date(task.writeReceipt.startedAt).getTime()
+        : 0;
+      const durationSeconds = Math.round(durationMs / 1000);
       get().addAuditEvent(taskId, 'write-failed', `写入失败：${message}（第 ${retryCount} 次）`, {
         failReason: message,
         retryCount,
+        failedAt: now,
+        failedProgress: task.writeReceipt.progress,
+        durationSeconds,
       });
       return {
         tasks: state.tasks.map((t) =>

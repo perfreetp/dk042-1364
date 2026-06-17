@@ -18,6 +18,7 @@ import { cn, formatDateTime, formatSlaRemaining, formatConfidence } from '@/util
 import type {
   ExamTask,
   AuditEvent,
+  AuditEventType,
   PacsWriteReceipt,
   SuggestionSentence,
   PacsWriteStatus,
@@ -94,11 +95,15 @@ interface AuditEventItemProps {
 function AuditEventItem({ event, isLast }: AuditEventItemProps) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = event.details && Object.keys(event.details).length > 0;
-  const showExpandable = hasDetails && (
-    event.type === 'sentence-edited' ||
-    event.type === 'write-failed' ||
-    event.type === 'write-success'
-  );
+  const expandableTypes: AuditEventType[] = [
+    'sentence-edited',
+    'sentence-decision-changed',
+    'draft-saved',
+    'write-failed',
+    'write-success',
+    'write-retried',
+  ];
+  const showExpandable = hasDetails && expandableTypes.includes(event.type);
   const timeStr = event.timestamp.slice(11, 19);
 
   return (
@@ -128,29 +133,89 @@ function AuditEventItem({ event, isLast }: AuditEventItemProps) {
               查看详情
             </button>
             {expanded && (
-              <div className="mt-2 p-2 rounded-sm bg-zinc-800/60 border border-zinc-700 text-xs space-y-1">
+              <div className="mt-2 p-2 rounded-sm bg-zinc-800/60 border border-zinc-700 text-xs space-y-1.5">
                 {event.type === 'sentence-edited' && (
                   <>
                     <div>
                       <div className="text-zinc-500 mb-0.5">修改前：</div>
-                      <div className="revision-delete">{String(event.details?.beforeText ?? '')}</div>
+                      <div className="revision-delete text-zinc-400">{String(event.details?.beforeText ?? '')}</div>
                     </div>
                     <div>
                       <div className="text-zinc-500 mb-0.5">修改后：</div>
-                      <div className="revision-insert">{String(event.details?.afterText ?? '')}</div>
+                      <div className="revision-insert text-zinc-200">{String(event.details?.afterText ?? '')}</div>
                     </div>
                   </>
                 )}
+                {event.type === 'sentence-decision-changed' && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-500">原决策：</span>
+                      <span className={cn(
+                        'px-1.5 py-0.5 rounded text-[10px] font-medium',
+                        event.details?.beforeDecision === 'keep' ? 'bg-green-900/40 text-green-400' :
+                        event.details?.beforeDecision === 'remove' ? 'bg-zinc-800 text-zinc-500 line-through' :
+                        'bg-blue-900/40 text-blue-400'
+                      )}>
+                        {event.details?.beforeDecision === 'keep' ? '保留' :
+                         event.details?.beforeDecision === 'remove' ? '删除' : '修改'}
+                      </span>
+                      <span className="text-zinc-600">→</span>
+                      <span className={cn(
+                        'px-1.5 py-0.5 rounded text-[10px] font-medium',
+                        event.details?.afterDecision === 'keep' ? 'bg-green-900/40 text-green-400' :
+                        event.details?.afterDecision === 'remove' ? 'bg-zinc-800 text-zinc-500 line-through' :
+                        'bg-blue-900/40 text-blue-400'
+                      )}>
+                        {event.details?.afterDecision === 'keep' ? '保留' :
+                         event.details?.afterDecision === 'remove' ? '删除' : '修改'}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="text-zinc-500 mb-0.5">语句内容：</div>
+                      <div className="text-zinc-300">{String(event.details?.content ?? '')}</div>
+                    </div>
+                  </div>
+                )}
+                {event.type === 'draft-saved' && (
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div className="bg-zinc-900/50 rounded-sm py-1.5">
+                      <div className="font-mono text-sm text-zinc-200">{String(event.details?.totalCount ?? 0)}</div>
+                      <div className="text-[10px] text-zinc-500">总语句</div>
+                    </div>
+                    <div className="bg-green-900/20 rounded-sm py-1.5">
+                      <div className="font-mono text-sm text-green-400">{String(event.details?.keepCount ?? 0)}</div>
+                      <div className="text-[10px] text-zinc-500">保留</div>
+                    </div>
+                    <div className="bg-zinc-800/50 rounded-sm py-1.5">
+                      <div className="font-mono text-sm text-zinc-400">{String(event.details?.removeCount ?? 0)}</div>
+                      <div className="text-[10px] text-zinc-500">删除</div>
+                    </div>
+                    <div className="bg-blue-900/20 rounded-sm py-1.5">
+                      <div className="font-mono text-sm text-blue-400">{String(event.details?.editCount ?? 0)}</div>
+                      <div className="text-[10px] text-zinc-500">修改</div>
+                    </div>
+                  </div>
+                )}
                 {event.type === 'write-failed' && (
-                  <div className="text-red-300 flex items-start gap-1.5">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{String(event.details?.failReason ?? event.summary)}</span>
+                  <div className="space-y-1">
+                    <div className="text-red-300 flex items-start gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{String(event.details?.failReason ?? event.summary)}</span>
+                    </div>
+                    <div className="text-zinc-400 text-[11px]">
+                      失败进度：{String(event.details?.failedProgress ?? '—')}% · 第 {String(event.details?.retryCount ?? 1)} 次失败
+                    </div>
                   </div>
                 )}
                 {event.type === 'write-success' && (
                   <div className="space-y-0.5 text-zinc-300">
                     <div>请求ID：<span className="font-mono text-green-300">{String(event.details?.requestId ?? '')}</span></div>
                     <div>耗时：<span className="font-mono">{String(event.details?.durationSeconds ?? '')}s</span></div>
+                  </div>
+                )}
+                {event.type === 'write-retried' && (
+                  <div className="text-orange-300">
+                    第 {String(event.details?.retryCount ?? 1)} 次重试写入
                   </div>
                 )}
               </div>

@@ -203,8 +203,8 @@ export const useReportStore = create<ReportState>((set, get) => ({
         summary: `语句决策变更：${oldDecision} → ${decision}`,
         details: {
           sentenceId,
-          oldDecision,
-          newDecision: decision,
+          beforeDecision: oldDecision,
+          afterDecision: decision,
           content: changedSentence.editedContent ?? changedSentence.content,
         },
       });
@@ -262,8 +262,8 @@ export const useReportStore = create<ReportState>((set, get) => ({
         summary: '语句内容已编辑',
         details: {
           sentenceId,
-          oldValue: beforeText,
-          newValue: afterText,
+          beforeText,
+          afterText,
         },
       });
     }

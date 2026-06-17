@@ -221,6 +221,74 @@ export default function BatchRunDetailDrawer() {
 
   const handleRetrySingle = (taskId: string) => {
     retryWriteTask(taskId);
+
+    const existing = batch?.taskRuns.find((tr) => tr.taskId === taskId);
+    const newRetryCount = (existing?.retryCount ?? 0) + 1;
+
+    updateBatchTaskRun(taskId, {
+      writeStatus: 'writing',
+      stage: '正在连接 PACS',
+      progress: 0,
+      retryCount: newRetryCount,
+      failReason: undefined,
+      startedAt: new Date().toISOString(),
+      completedAt: undefined,
+      requestId: undefined,
+      durationSeconds: undefined,
+    });
+
+    const startTime = Date.now();
+
+    setTimeout(() => {
+      updateBatchTaskRun(taskId, { stage: '正在索引 DICOM 序列', progress: 25 });
+    }, 1200);
+
+    setTimeout(() => {
+      updateBatchTaskRun(taskId, { stage: '正在生成结构化报告', progress: 50 });
+    }, 2400);
+
+    setTimeout(() => {
+      updateBatchTaskRun(taskId, { stage: '正在写入 PACS 归档', progress: 75 });
+    }, 3600);
+
+    setTimeout(() => {
+      const requestId = `REQ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const durationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
+      const now = new Date().toISOString();
+
+      const currentTask = useTaskStore.getState().tasks.find((t) => t.taskId === taskId);
+      const finalStatus = currentTask?.writeStatus;
+
+      if (finalStatus === 'success') {
+        updateBatchTaskRun(taskId, {
+          writeStatus: 'success',
+          progress: 100,
+          stage: '写入完成',
+          requestId: currentTask.writeReceipt?.requestId ?? requestId,
+          durationSeconds,
+          completedAt: now,
+          failReason: undefined,
+        });
+      } else if (finalStatus === 'failed') {
+        updateBatchTaskRun(taskId, {
+          writeStatus: 'failed',
+          stage: `写入失败：${currentTask.writeReceipt?.message ?? '未知错误'}`,
+          failReason: currentTask.writeReceipt?.message ?? '未知错误',
+          durationSeconds,
+          completedAt: now,
+          progress: currentTask.writeReceipt?.progress ?? 75,
+        });
+      } else {
+        updateBatchTaskRun(taskId, {
+          writeStatus: 'success',
+          progress: 100,
+          stage: '写入完成',
+          requestId,
+          durationSeconds,
+          completedAt: now,
+        });
+      }
+    }, 4800);
   };
 
   return (

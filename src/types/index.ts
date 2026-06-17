@@ -31,6 +31,7 @@ export type AuditEventType =
   | 'task-selected'
   | 'draft-saved'
   | 'draft-loaded'
+  | 'sentence-decision-changed'
   | 'sentence-keep'
   | 'sentence-remove'
   | 'sentence-edited'
@@ -200,9 +201,10 @@ export const AUDIT_EVENT_TYPE_LABEL: Record<AuditEventType, string> = {
   'task-selected': '选中任务',
   'draft-saved': '保存草稿',
   'draft-loaded': '加载草稿',
+  'sentence-decision-changed': '语句决策变更',
   'sentence-keep': '保留语句',
   'sentence-remove': '删除语句',
-  'sentence-edited': '修改语句',
+  'sentence-edited': '修改语句内容',
   'write-started': '开始写入',
   'write-progress': '写入进度',
   'write-success': '写入成功',
@@ -216,6 +218,7 @@ export const AUDIT_EVENT_TYPE_COLOR: Record<AuditEventType, string> = {
   'task-selected': 'bg-zinc-500',
   'draft-saved': 'bg-cyan-500',
   'draft-loaded': 'bg-cyan-400',
+  'sentence-decision-changed': 'bg-blue-500',
   'sentence-keep': 'bg-emerald-500',
   'sentence-remove': 'bg-red-500',
   'sentence-edited': 'bg-amber-500',
