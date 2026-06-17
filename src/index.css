@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-medical-950 text-zinc-100 font-sans;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 rounded-sm bg-medical-600 text-white border border-medical-500 hover:bg-medical-500 active:bg-medical-700 transition-colors;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 rounded-sm bg-review-reject text-white border border-red-500 hover:bg-red-500 active:bg-red-700 transition-colors;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 rounded-sm bg-transparent text-zinc-100 border border-zinc-700 hover:bg-zinc-800 active:bg-zinc-700 transition-colors;
+  }
+
+  .btn-outline {
+    @apply px-4 py-2 rounded-sm bg-transparent text-medical-400 border border-medical-500 hover:bg-medical-900/50 active:bg-medical-800/50 transition-colors;
+  }
+
+  .card-base {
+    @apply bg-zinc-900/60 border border-zinc-800 rounded-sm;
+  }
+
+  .window-content {
+    @apply p-4 animate-fade-in-up h-full overflow-auto;
+  }
+
+  .revision-insert {
+    @apply text-review-ai underline decoration-2 decoration-dashed underline-offset-2;
+  }
+
+  .revision-delete {
+    @apply text-zinc-500 line-through;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #3f3f46;
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: #52525b;
+  }
+}
