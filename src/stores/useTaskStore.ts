@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ExamTask, ExamType, SortBy, TopBannerReceipt, PacsWriteReceipt, ExamCategory, AuditEvent, AuditEventType } from '../types';
+import type { ExamTask, ExamType, SortBy, TopBannerReceipt, PacsWriteReceipt, ExamCategory, AuditEvent, AuditEventType, BatchTaskRun, BatchRun } from '../types';
 import { generateMockTasks } from '../mock/data';
 
 interface TaskState {
@@ -39,6 +39,7 @@ interface TaskState {
 
   openDetailDrawer: (taskId: string) => void;
   closeDetailDrawer: () => void;
+  recordAuditEvent: (taskId: string, event: { type: AuditEventType; summary: string; details?: Record<string, unknown> }) => void;
   addAuditEvent: (taskId: string, type: AuditEventType, summary: string, details?: Record<string, unknown>) => void;
   getTaskAuditEvents: (taskId: string) => AuditEvent[];
 }
@@ -54,6 +55,7 @@ function generateAuditId(): string {
 }
 
 function initTaskFields(task: ExamTask): ExamTask {
+  const storedAudit = loadAuditEventsForTask(task.taskId);
   return {
     ...task,
     writeStatus: task.writeStatus ?? 'idle',
@@ -63,11 +65,34 @@ function initTaskFields(task: ExamTask): ExamTask {
       retryCount: 0,
     },
     hasDraft: task.hasDraft ?? false,
-    auditEvents: task.auditEvents ?? [],
+    auditEvents: storedAudit.length > 0 ? storedAudit : (task.auditEvents ?? []),
   };
 }
 
 const DRAFT_LOCAL_STORAGE_KEY = 'radreview:drafts';
+const AUDIT_LOCAL_STORAGE_KEY = 'radreview:audit';
+
+function loadAuditEventsForTask(taskId: string): AuditEvent[] {
+  try {
+    const raw = localStorage.getItem(AUDIT_LOCAL_STORAGE_KEY);
+    if (!raw) return [];
+    const all = JSON.parse(raw) as Record<string, AuditEvent[]>;
+    return all[taskId] ?? [];
+  } catch (_e) {
+    return [];
+  }
+}
+
+function persistAuditEventsForTask(taskId: string, events: AuditEvent[]): void {
+  try {
+    const raw = localStorage.getItem(AUDIT_LOCAL_STORAGE_KEY);
+    const all: Record<string, AuditEvent[]> = raw ? JSON.parse(raw) : {};
+    all[taskId] = events;
+    localStorage.setItem(AUDIT_LOCAL_STORAGE_KEY, JSON.stringify(all));
+  } catch (_e) {
+    // ignore
+  }
+}
 
 export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: generateMockTasks(30).map(initTaskFields),
@@ -89,6 +114,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         if (raw) {
           const drafts = JSON.parse(raw) as Record<string, { savedAt: string }>;
           if (drafts[taskId]) {
+            get().addAuditEvent(taskId, 'task-selected', '进入任务审核视图（草稿已恢复）');
+            get().addAuditEvent(taskId, 'draft-loaded', '从本地恢复草稿，包含上次的语句取舍与修改');
             set((state) => ({
               selectedTaskId: taskId,
               tasks: state.tasks.map((t) =>
@@ -352,6 +379,87 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   retryWriteTask: (taskId) => {
     get().startWriteTask(taskId);
+
+    let currentBatch: { updateBatchTaskRun?: (taskId: string, patch: Partial<BatchTaskRun>) => void; getCurrentBatch?: () => BatchRun | null } = {};
+    try {
+      const { useBatchStore } = require('./useBatchStore');
+      currentBatch = {
+        updateBatchTaskRun: useBatchStore.getState().updateBatchTaskRun,
+        getCurrentBatch: () => useBatchStore.getState().currentBatchRun,
+      };
+    } catch (_e) {
+      // ignore
+    }
+
+    const syncBatch = (patch: Partial<BatchTaskRun>) => {
+      const batch = currentBatch.getCurrentBatch?.();
+      if (batch && currentBatch.updateBatchTaskRun && batch.taskRuns.some((tr) => tr.taskId === taskId)) {
+        currentBatch.updateBatchTaskRun(taskId, patch);
+      }
+    };
+
+    const existing = currentBatch.getCurrentBatch?.()?.taskRuns.find((tr) => tr.taskId === taskId);
+    const newRetryCount = (existing?.retryCount ?? 0) + 1;
+    syncBatch({
+      writeStatus: 'writing',
+      stage: '连接PACS',
+      progress: 0,
+      retryCount: newRetryCount,
+      failReason: undefined,
+      startedAt: new Date().toISOString(),
+      completedAt: undefined,
+      requestId: undefined,
+      durationSeconds: undefined,
+    });
+
+    const simulateStep = (progress: number, stage: string, delay: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          get().updateWriteProgress(taskId, progress, stage);
+          syncBatch({ progress, stage });
+          resolve();
+        }, delay);
+      });
+
+    (async () => {
+      await simulateStep(25, '正在索引检查序列', 1200);
+      await simulateStep(50, '正在生成结构化报告', 1200);
+      await simulateStep(75, '正在写入归档数据库', 1200);
+
+      const isSuccess = Math.random() < 0.8;
+      const durationSeconds = 4 + Math.round(Math.random() * 2);
+      const requestId = `REQ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+      if (isSuccess) {
+        get().completeWriteTask(taskId, requestId, durationSeconds);
+        syncBatch({
+          writeStatus: 'success',
+          stage: '成功',
+          progress: 100,
+          requestId,
+          durationSeconds,
+          completedAt: new Date().toISOString(),
+          failReason: undefined,
+        });
+      } else {
+        const reasons = [
+          'PACS 服务端响应超时',
+          '结构化报告字段校验失败',
+          '归档数据库连接中断',
+          '检查UID已存在冲突',
+        ];
+        const reason = reasons[Math.floor(Math.random() * reasons.length)];
+        get().failWriteTask(taskId, reason);
+        syncBatch({
+          writeStatus: 'failed',
+          stage: '失败',
+          failReason: reason,
+          durationSeconds,
+          completedAt: new Date().toISOString(),
+          progress: 75,
+        });
+      }
+    })();
   },
 
   showTopBanner: (receipt) => set({ showTopBannerReceipt: receipt }),
@@ -388,13 +496,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       summary,
       details,
     };
-    set((state) => ({
-      tasks: state.tasks.map((t) => {
+    set((state) => {
+      const tasks = state.tasks.map((t) => {
         if (t.taskId !== taskId) return t;
         const events = [...(t.auditEvents ?? []), event];
+        persistAuditEventsForTask(taskId, events);
         return { ...t, auditEvents: events };
-      }),
-    }));
+      });
+      return { tasks };
+    });
+  },
+
+  recordAuditEvent: (taskId, event) => {
+    get().addAuditEvent(taskId, event.type, event.summary, event.details);
   },
 
   getTaskAuditEvents: (taskId) => {

@@ -334,12 +334,22 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   updateBatchTaskRun: (taskId, patch) =>
     set((state) => {
       if (!state.currentBatchRun) return {};
+      const updatedTaskRuns = state.currentBatchRun.taskRuns.map((tr) =>
+        tr.taskId === taskId ? { ...tr, ...patch } : tr,
+      );
+      const newSuccessCount = updatedTaskRuns.filter((tr) => tr.writeStatus === 'success').length;
+      const newFailedCount = updatedTaskRuns.filter((tr) => tr.writeStatus === 'failed').length;
+      const isAllDone = updatedTaskRuns.every(
+        (tr) => tr.writeStatus === 'success' || tr.writeStatus === 'failed',
+      );
       return {
         currentBatchRun: {
           ...state.currentBatchRun,
-          taskRuns: state.currentBatchRun.taskRuns.map((tr) =>
-            tr.taskId === taskId ? { ...tr, ...patch } : tr,
-          ),
+          successCount: newSuccessCount,
+          failedCount: newFailedCount,
+          taskRuns: updatedTaskRuns,
+          status: isAllDone ? 'completed' : state.currentBatchRun.status,
+          completedAt: isAllDone ? new Date().toISOString() : state.currentBatchRun.completedAt,
         },
       };
     }),

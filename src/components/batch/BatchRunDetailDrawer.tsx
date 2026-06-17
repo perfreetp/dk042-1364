@@ -221,47 +221,6 @@ export default function BatchRunDetailDrawer() {
 
   const handleRetrySingle = (taskId: string) => {
     retryWriteTask(taskId);
-    const existing = batch?.taskRuns.find(tr => tr.taskId === taskId);
-    const newRetryCount = (existing?.retryCount ?? 0) + 1;
-    updateBatchTaskRun(taskId, {
-      writeStatus: 'writing',
-      stage: '连接PACS',
-      progress: 0,
-      retryCount: newRetryCount,
-      failReason: undefined,
-      startedAt: new Date().toISOString(),
-      completedAt: undefined,
-      requestId: undefined,
-      durationSeconds: undefined,
-    });
-    setTimeout(() => updateBatchTaskRun(taskId, { progress: 25, stage: '索引序列' }), 300);
-    setTimeout(() => updateBatchTaskRun(taskId, { progress: 50, stage: '结构化报告' }), 800);
-    setTimeout(() => updateBatchTaskRun(taskId, { progress: 75, stage: '写入归档' }), 1300);
-    setTimeout(() => {
-      const isOk = Math.random() < 0.95;
-      const dur = 2 + Math.round(Math.random() * 2);
-      if (isOk) {
-        const req = `${batch?.id ?? 'BAT'}-MANUAL-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-        updateBatchTaskRun(taskId, {
-          writeStatus: 'success',
-          stage: '成功',
-          progress: 100,
-          requestId: req,
-          durationSeconds: dur,
-          completedAt: new Date().toISOString(),
-        });
-        useTaskStore.getState().completeWriteTask(taskId, req, dur);
-      } else {
-        updateBatchTaskRun(taskId, {
-          writeStatus: 'failed',
-          stage: '失败',
-          failReason: 'PACS 服务端响应超时',
-          durationSeconds: dur,
-          completedAt: new Date().toISOString(),
-        });
-        useTaskStore.getState().failWriteTask(taskId, 'PACS 服务端响应超时');
-      }
-    }, 1800);
   };
 
   return (
