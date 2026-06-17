@@ -1,12 +1,15 @@
 import { create } from 'zustand';
-import type { ExamTask, ExamType, RejectTemplate } from '../types';
+import type { ExamTask, ExamType, RejectTemplate, BatchTimeRange, PriorityLevel } from '../types';
 import { generateMockRejectTemplates } from '../mock/data';
 import { useTaskStore } from './useTaskStore';
 
 interface BatchFilter {
   examType: ExamType | 'all';
+  selectedExamTypes: ExamType[];
   minConfidence: number;
   noSignificantChange: boolean;
+  onlyNormalPriority: boolean;
+  timeRange: BatchTimeRange;
 }
 
 interface BatchState {
@@ -25,9 +28,30 @@ interface BatchState {
 
 const defaultBatchFilter: BatchFilter = {
   examType: 'all',
+  selectedExamTypes: [],
   minConfidence: 0.85,
   noSignificantChange: true,
+  onlyNormalPriority: false,
+  timeRange: '7d',
 };
+
+function isInTimeRange(examTime: string, range: BatchTimeRange): boolean {
+  if (range === 'all') return true;
+  const now = new Date();
+  const exam = new Date(examTime);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.floor((startOfToday.getTime() - exam.getTime()) / (1000 * 60 * 60 * 24));
+  switch (range) {
+    case 'today':
+      return diffDays === 0;
+    case '3d':
+      return diffDays <= 2;
+    case '7d':
+      return diffDays <= 6;
+    default:
+      return true;
+  }
+}
 
 export const useBatchStore = create<BatchState>((set, get) => ({
   selectedTaskIds: [],
@@ -47,7 +71,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   selectAllMatching: () => {
     const matchingTasks = get().getMatchingTasks();
     const pendingIds = matchingTasks
-      .filter((t) => t.status === 'pending')
+      .filter((t) => t.status === 'pending' || t.status === 'timeout')
       .map((t) => t.taskId);
     set({ selectedTaskIds: pendingIds });
   },
@@ -94,9 +118,13 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const tasks = useTaskStore.getState().tasks;
 
     return tasks.filter((task) => {
-      if (task.status !== 'pending') return false;
+      if (task.status !== 'pending' && task.status !== 'timeout') return false;
 
-      if (batchFilter.examType !== 'all' && task.examType !== batchFilter.examType) {
+      if (batchFilter.selectedExamTypes.length > 0) {
+        if (!batchFilter.selectedExamTypes.includes(task.examType)) {
+          return false;
+        }
+      } else if (batchFilter.examType !== 'all' && task.examType !== batchFilter.examType) {
         return false;
       }
 
@@ -105,6 +133,14 @@ export const useBatchStore = create<BatchState>((set, get) => ({
       }
 
       if (batchFilter.noSignificantChange && task.hasSignificantChange) {
+        return false;
+      }
+
+      if (batchFilter.onlyNormalPriority && task.priority !== 'normal') {
+        return false;
+      }
+
+      if (!isInTimeRange(task.examTime, batchFilter.timeRange)) {
         return false;
       }
 

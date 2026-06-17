@@ -18,6 +18,7 @@ import {
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useLesionStore } from '@/stores/useLesionStore';
 import { usePreferenceStore } from '@/stores/usePreferenceStore';
+import { useReportStore } from '@/stores/useReportStore';
 import type { LesionMeasurement, CompareMode, ExamTask } from '@/types';
 import { cn, formatDateTime } from '@/utils';
 
@@ -58,6 +59,7 @@ export default function ImageCompare() {
   const setCompareMode = useLesionStore((s) => s.setCompareMode);
 
   const preferences = usePreferenceStore((s) => s.preferences);
+  const loadSentencesForTask = useReportStore((s) => s.loadSentencesForTask);
 
   const [currentSlice, setCurrentSlice] = useState(40);
   const [zoom, setZoom] = useState(100);
@@ -74,18 +76,16 @@ export default function ImageCompare() {
   useEffect(() => {
     if (selectedTaskId) {
       setLesionsForTask(selectedTaskId);
+      loadSentencesForTask(selectedTaskId);
       setCurrentSlice(40);
       setZoom(100);
     }
-  }, [selectedTaskId, setLesionsForTask]);
+  }, [selectedTaskId, setLesionsForTask, loadSentencesForTask]);
 
   useEffect(() => {
-    const preset = WINDOW_PRESETS.find((p) => p.name === preferences.defaultWindowMode);
-    if (preset) {
-      setWindowWW(preset.ww);
-      setWindowWL(preset.wl);
-    }
-  }, [preferences.defaultWindowMode]);
+    const mappedCompareMode: CompareMode = preferences.defaultWindowMode;
+    setCompareMode(mappedCompareMode);
+  }, [preferences.defaultWindowMode, setCompareMode]);
 
   const taskIndex = useMemo(() => {
     if (!selectedTaskId) return -1;

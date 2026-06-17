@@ -15,12 +15,13 @@ import {
   Layers,
   Filter,
   SortAsc,
+  RotateCcw,
 } from 'lucide-react';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { usePreferenceStore } from '@/stores/usePreferenceStore';
 import { useSlaTimer } from '@/hooks/useSlaTimer';
 import * as utils from '@/utils';
-import type { ExamTask, ExamType, PriorityLevel, SortBy } from '@/types';
+import type { ExamTask, ExamType, PriorityLevel, SortBy, PacsWriteStatus } from '@/types';
 
 type ExamCategory = 'all' | 'CT' | 'MR' | 'DR' | 'US' | 'other';
 
@@ -161,6 +162,7 @@ export default function TaskList() {
   const selectTask = useTaskStore((s) => s.selectTask);
   const passTask = useTaskStore((s) => s.passTask);
   const rejectTask = useTaskStore((s) => s.rejectTask);
+  const retryWriteTask = useTaskStore((s) => s.retryWriteTask);
   const getFilteredAndSortedTasks = useTaskStore((s) => s.getFilteredAndSortedTasks);
 
   const preferences = usePreferenceStore((s) => s.preferences);
@@ -400,6 +402,7 @@ export default function TaskList() {
                 <th className="px-3 py-3 text-left font-medium w-40">AI标签</th>
                 <th className="px-3 py-3 text-left font-medium w-36">SLA倒计时</th>
                 <th className="px-3 py-3 text-left font-medium w-20">优先级</th>
+                <th className="px-3 py-3 text-left font-medium w-28">写入状态</th>
                 <th className="px-3 py-3 text-right font-medium w-52">操作</th>
               </tr>
             </thead>
@@ -427,6 +430,11 @@ export default function TaskList() {
                       <div className="flex items-center gap-3">
                         <div>
                           <div className="flex items-center gap-2">
+                            {task.hasDraft && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] bg-amber-900/50 text-amber-300 border border-amber-700/50 font-medium" title="有草稿">
+                                🏷️ 草稿
+                              </span>
+                            )}
                             <span className="font-medium text-zinc-100">{task.patient.name}</span>
                             <span className="text-xs text-zinc-500 font-mono">{task.patient.id}</span>
                           </div>
@@ -493,6 +501,12 @@ export default function TaskList() {
                     <td className="px-3">
                       <PriorityBadge priority={task.priority} />
                     </td>
+                    <td className="px-3">
+                      <WriteStatusCell
+                        task={task}
+                        onRetry={() => retryWriteTask(task.taskId)}
+                      />
+                    </td>
                     <td className="px-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1.5">
                         <button
@@ -526,7 +540,7 @@ export default function TaskList() {
               })}
               {filteredTasks.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-16 text-center text-zinc-500">
+                  <td colSpan={8} className="px-3 py-16 text-center text-zinc-500">
                     <div className="flex flex-col items-center gap-2">
                       <Layers className="w-10 h-10 text-zinc-700" />
                       <span className="text-sm">暂无符合条件的待审任务</span>
@@ -539,5 +553,82 @@ export default function TaskList() {
         </div>
       </div>
     </div>
+  );
+}
+
+interface WriteStatusCellProps {
+  task: ExamTask;
+  onRetry: () => void;
+}
+
+function WriteStatusCell({ task, onRetry }: WriteStatusCellProps) {
+  const writeStatus: PacsWriteStatus = task.writeStatus ?? 'idle';
+  const progress = task.writeReceipt?.progress ?? 0;
+
+  if (writeStatus === 'writing') {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-blue-400 font-medium">
+          写入中 {progress}%
+        </span>
+        <div className="w-12 h-1.5 bg-zinc-800 rounded-sm overflow-hidden">
+          <div
+            className="h-full bg-blue-500 transition-all"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (writeStatus === 'success') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-green-900/40 text-green-400 border border-green-800/50 text-xs font-medium">
+        <Check className="w-3 h-3" />
+        已归档
+      </span>
+    );
+  }
+
+  if (writeStatus === 'failed') {
+    return (
+      <button
+        onClick={onRetry}
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-red-900/40 text-red-400 border border-red-800/50 text-xs font-medium hover:bg-red-800/50 transition-colors"
+      >
+        <RotateCcw className="w-3 h-3" />
+        重试
+      </button>
+    );
+  }
+
+  if (task.status === 'passed') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-green-900/30 text-green-500 border border-green-800/40 text-xs font-medium">
+        已通过
+      </span>
+    );
+  }
+
+  if (task.status === 'rejected') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-orange-900/30 text-orange-500 border border-orange-800/40 text-xs font-medium">
+        已驳回
+      </span>
+    );
+  }
+
+  if (task.status === 'timeout') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-red-900/30 text-red-400 border border-red-800/40 text-xs font-medium">
+        已超时
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-zinc-800/60 text-zinc-400 border border-zinc-700 text-xs font-medium">
+      待审
+    </span>
   );
 }

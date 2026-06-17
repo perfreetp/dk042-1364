@@ -5,6 +5,10 @@ import type {
   RevisionRecord,
 } from '../types';
 import { generateMockSuggestions } from '../mock/data';
+import { useTaskStore } from './useTaskStore';
+
+const DRAFT_SENTENCES_KEY = 'radreview:draft-sentences';
+const DRAFT_TASKS_KEY = 'radreview:drafts';
 
 interface ReportState {
   sentences: SuggestionSentence[];
@@ -14,6 +18,8 @@ interface ReportState {
   updateSentenceDecision: (sentenceId: string, decision: SentenceDecision) => void;
   editSentenceContent: (sentenceId: string, newContent: string) => void;
   getFinalReportText: () => string;
+  saveDraft: (taskId: string) => string;
+  hasDraft: (taskId: string) => boolean;
 }
 
 function generateRevisionId(): string {
@@ -36,12 +42,46 @@ function createRevision(
   };
 }
 
+function loadDraftSentences(taskId: string): SuggestionSentence[] | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_SENTENCES_KEY);
+    if (!raw) return null;
+    const all = JSON.parse(raw) as Record<string, SuggestionSentence[]>;
+    return all[taskId] ?? null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function persistDraftSentences(taskId: string, sentences: SuggestionSentence[]): void {
+  try {
+    const raw = localStorage.getItem(DRAFT_SENTENCES_KEY);
+    const all: Record<string, SuggestionSentence[]> = raw ? JSON.parse(raw) : {};
+    all[taskId] = sentences;
+    localStorage.setItem(DRAFT_SENTENCES_KEY, JSON.stringify(all));
+  } catch (_e) {
+    // ignore
+  }
+}
+
+function markTaskHasDraft(taskId: string, savedAt: string): void {
+  try {
+    const raw = localStorage.getItem(DRAFT_TASKS_KEY);
+    const all: Record<string, { savedAt: string }> = raw ? JSON.parse(raw) : {};
+    all[taskId] = { savedAt };
+    localStorage.setItem(DRAFT_TASKS_KEY, JSON.stringify(all));
+  } catch (_e) {
+    // ignore
+  }
+}
+
 export const useReportStore = create<ReportState>((set, get) => ({
   sentences: [],
   currentTaskId: null,
 
   loadSentencesForTask: (taskId) => {
-    const sentences = generateMockSuggestions(taskId);
+    const draft = loadDraftSentences(taskId);
+    const sentences = draft ?? generateMockSuggestions(taskId);
     set({ sentences, currentTaskId: taskId });
   },
 
@@ -164,6 +204,26 @@ export const useReportStore = create<ReportState>((set, get) => ({
     }
 
     return sections.join('\n').trim();
+  },
+
+  saveDraft: (taskId) => {
+    const { sentences } = get();
+    persistDraftSentences(taskId, sentences);
+    const savedAt = new Date().toISOString();
+    markTaskHasDraft(taskId, savedAt);
+    useTaskStore.getState().setTaskHasDraft(taskId, savedAt);
+    return savedAt;
+  },
+
+  hasDraft: (taskId) => {
+    try {
+      const raw = localStorage.getItem(DRAFT_TASKS_KEY);
+      if (!raw) return false;
+      const all = JSON.parse(raw) as Record<string, { savedAt: string }>;
+      return !!all[taskId];
+    } catch (_e) {
+      return false;
+    }
   },
 }));
 

@@ -2,6 +2,8 @@ export type ExamType = 'CT' | 'MR' | 'DR' | 'US' | 'DSA' | 'MG';
 
 export type ReviewStatus = 'pending' | 'passed' | 'rejected' | 'timeout';
 
+export type PacsWriteStatus = 'idle' | 'queued' | 'writing' | 'success' | 'failed' | 'retry-wait';
+
 export type PriorityLevel = 'normal' | 'urgent' | 'emergency';
 
 export interface PatientInfo {
@@ -11,6 +13,17 @@ export interface PatientInfo {
   age: number;
   bedNo?: string;
   department?: string;
+}
+
+export interface PacsWriteReceipt {
+  status: PacsWriteStatus;
+  startedAt?: string;
+  completedAt?: string;
+  progress: number;
+  message?: string;
+  requestId?: string;
+  retryCount: number;
+  nextRetryAt?: string;
 }
 
 export interface ExamTask {
@@ -27,6 +40,10 @@ export interface ExamTask {
   historyExamIds?: string[];
   lesionalCount: number;
   hasSignificantChange?: boolean;
+  writeStatus?: PacsWriteStatus;
+  writeReceipt?: PacsWriteReceipt;
+  hasDraft?: boolean;
+  lastDraftSavedAt?: string;
 }
 
 export interface LesionMeasurement {
@@ -105,3 +122,21 @@ export interface UserPreferences {
 export type CompareMode = 'split' | 'overlay' | 'raw' | 'labeled';
 
 export type SortBy = 'sla' | 'priority' | 'time' | 'confidence';
+
+export type TopBannerStatus = 'writing' | 'success' | 'failed';
+
+export interface TopBannerReceipt {
+  status: TopBannerStatus;
+  taskId: string;
+  patientName: string;
+  progress?: number;
+  message?: string;
+  requestId?: string;
+  durationSeconds?: number;
+  retryCount?: number;
+  isBatch?: boolean;
+  batchSuccess?: number;
+  batchFailed?: number;
+}
+
+export type BatchTimeRange = 'today' | '3d' | '7d' | 'all';

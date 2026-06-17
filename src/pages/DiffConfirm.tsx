@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Check,
   X,
@@ -18,7 +19,7 @@ import type {
   ExamTask,
   RejectTemplate,
 } from '@/types';
-import { cn } from '@/lib/utils';
+import { cn, formatDateTime } from '@/utils';
 
 type CategoryTab = 'all' | 'finding' | 'impression' | 'measurement';
 
@@ -570,13 +571,15 @@ function RejectModal({
 }
 
 export default function DiffConfirm() {
-  const { tasks, selectedTaskId, passTask, rejectTask } = useTaskStore();
+  const navigate = useNavigate();
+  const { tasks, selectedTaskId, passTask, rejectTask, startWriteTask, updateWriteProgress, completeWriteTask, failWriteTask } = useTaskStore();
   const {
     sentences,
     currentTaskId,
     loadSentencesForTask,
     updateSentenceDecision,
     editSentenceContent,
+    saveDraft,
   } = useReportStore();
   const { rejectTemplates } = useBatchStore();
 
@@ -589,6 +592,8 @@ export default function DiffConfirm() {
   const [splitRatio, setSplitRatio] = useState(2 / 3);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastText, setToastText] = useState('');
 
   const selectedTask = useMemo<ExamTask | undefined>(
     () => tasks.find((t) => t.taskId === selectedTaskId),
@@ -704,10 +709,53 @@ export default function DiffConfirm() {
     window.addEventListener('mouseup', handleMouseUp);
   };
 
+  const showToast = (text: string) => {
+    setToastText(text);
+    setToastVisible(true);
+    setTimeout(() => setToastVisible(false), 2500);
+  };
+
+  const handleSaveDraft = () => {
+    if (!selectedTask) return;
+    const savedAt = saveDraft(selectedTask.taskId);
+    const formatted = formatDateTime(savedAt).replace(' ', ' ') +
+      ':' + String(new Date(savedAt).getSeconds()).padStart(2, '0');
+    showToast(`草稿已保存 ${formatted}`);
+  };
+
+  const handleBackToCompare = () => {
+    navigate('/compare');
+  };
+
   const handlePassToPacs = () => {
-    if (selectedTask) {
-      passTask(selectedTask.taskId);
-    }
+    if (!selectedTask || !selectedTaskId) return;
+
+    const tid = selectedTaskId;
+    const startedAt = Date.now();
+    startWriteTask(tid);
+
+    setTimeout(() => {
+      updateWriteProgress(tid, 25, '正在索引序列…');
+    }, 1000);
+
+    setTimeout(() => {
+      updateWriteProgress(tid, 50, '正在结构化报告…');
+    }, 2000);
+
+    setTimeout(() => {
+      updateWriteProgress(tid, 75, '正在写入归档…');
+    }, 3000);
+
+    setTimeout(() => {
+      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      const isSuccess = Math.random() < 0.9;
+      if (isSuccess) {
+        const requestId = `REQ-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        completeWriteTask(tid, requestId, durationSeconds);
+      } else {
+        failWriteTask(tid, 'PACS 连接超时，请检查网络后重试');
+      }
+    }, 4000);
   };
 
   const handleOpenRejectModal = () => {
@@ -830,16 +878,26 @@ export default function DiffConfirm() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <button className="btn-ghost text-sm inline-flex items-center gap-1.5">
+            <button onClick={handleSaveDraft} className="btn-ghost text-sm inline-flex items-center gap-1.5">
               <Save className="w-4 h-4" />
               保存草稿
             </button>
-            <button className="btn-outline text-sm inline-flex items-center gap-1.5">
+            <button onClick={handleBackToCompare} className="btn-outline text-sm inline-flex items-center gap-1.5">
               <ArrowLeft className="w-4 h-4" />
               返回影像对照
             </button>
           </div>
         </div>
+      </div>
+
+      <div
+        className={`fixed left-1/2 -translate-x-1/2 bottom-24 px-4 py-2.5 rounded-sm border border-zinc-600 bg-zinc-800/95 text-zinc-100 text-sm shadow-xl backdrop-blur transition-all duration-300 z-50 ${
+          toastVisible
+            ? 'opacity-100 translate-y-0'
+            : 'opacity-0 translate-y-4 pointer-events-none'
+        }`}
+      >
+        {toastText}
       </div>
 
       <RejectModal

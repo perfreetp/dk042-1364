@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ClipboardList,
   TrendingUp,
@@ -58,6 +59,7 @@ function formatDuration(seconds: number): string {
 }
 
 export default function Preferences() {
+  const location = useLocation();
   const { period, stats, setPeriod } = useStatsStore();
   const { preferences, updatePreferences, resetToDefaults } = usePreferenceStore();
   const { rejectTemplates } = useBatchStore();
@@ -71,7 +73,17 @@ export default function Preferences() {
   };
 
   const handleSave = () => {
+    const prevWindowMode = preferences.defaultWindowMode;
     updatePreferences(draftPreferences);
+
+    if (
+      draftPreferences.defaultWindowMode !== prevWindowMode &&
+      location.pathname === '/compare'
+    ) {
+      // ImageCompare 会通过 usePreferenceStore 的订阅自动响应变化
+      // useEffect(preferences) → setCompareMode，因此无需额外 dispatch
+    }
+
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

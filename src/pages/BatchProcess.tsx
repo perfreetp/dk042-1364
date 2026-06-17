@@ -50,6 +50,14 @@ function isInTimeRange(examTime: string, range: TimeRange): boolean {
 export default function BatchProcess() {
   const tasks = useTaskStore((s) => s.tasks);
   const preferences = usePreferenceStore((s) => s.preferences);
+  const taskStoreActions = useTaskStore((s) => ({
+    startWriteTask: s.startWriteTask,
+    updateWriteProgress: s.updateWriteProgress,
+    completeWriteTask: s.completeWriteTask,
+    failWriteTask: s.failWriteTask,
+    showTopBanner: s.showTopBanner,
+    clearTopBanner: s.clearTopBanner,
+  }));
   const {
     selectedTaskIds,
     rejectTemplates,
@@ -58,13 +66,15 @@ export default function BatchProcess() {
     clearSelection,
     applyBatchPass,
     applyBatchReject,
+    setBatchFilter,
+    batchFilter,
   } = useBatchStore();
 
-  const [selectedExamTypes, setSelectedExamTypes] = useState<ExamType[]>([]);
-  const [minConfidence, setMinConfidence] = useState(0.85);
-  const [noSignificantChange, setNoSignificantChange] = useState(true);
-  const [onlyNormalPriority, setOnlyNormalPriority] = useState(false);
-  const [timeRange, setTimeRange] = useState<TimeRange>('7d');
+  const [selectedExamTypes, setSelectedExamTypes] = useState<ExamType[]>(batchFilter.selectedExamTypes);
+  const [minConfidence, setMinConfidence] = useState(batchFilter.minConfidence);
+  const [noSignificantChange, setNoSignificantChange] = useState(batchFilter.noSignificantChange);
+  const [onlyNormalPriority, setOnlyNormalPriority] = useState(batchFilter.onlyNormalPriority);
+  const [timeRange, setTimeRange] = useState<TimeRange>(batchFilter.timeRange);
 
   const [showPassModal, setShowPassModal] = useState(false);
   const [showRejectPanel, setShowRejectPanel] = useState(false);
@@ -75,16 +85,15 @@ export default function BatchProcess() {
   const [lastUsedTemplateId, setLastUsedTemplateId] = useState<string | null>(null);
 
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      if (t.status !== 'pending') return false;
-      if (selectedExamTypes.length > 0 && !selectedExamTypes.includes(t.examType)) return false;
-      if (t.aiConfidence < minConfidence) return false;
-      if (noSignificantChange && t.hasSignificantChange) return false;
-      if (onlyNormalPriority && t.priority !== 'normal') return false;
-      if (!isInTimeRange(t.examTime, timeRange)) return false;
-      return true;
-    });
-  }, [tasks, selectedExamTypes, minConfidence, noSignificantChange, onlyNormalPriority, timeRange]);
+    return useBatchStore.getState().getMatchingTasks();
+  }, [
+    tasks,
+    selectedExamTypes,
+    minConfidence,
+    noSignificantChange,
+    onlyNormalPriority,
+    timeRange,
+  ]);
 
   const totalPending = useMemo(
     () => tasks.filter((t) => t.status === 'pending').length,
@@ -105,9 +114,11 @@ export default function BatchProcess() {
   }, [selectedTasks]);
 
   const handleToggleExamType = (type: ExamType) => {
-    setSelectedExamTypes((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
-    );
+    setSelectedExamTypes((prev) => {
+      const next = prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type];
+      setBatchFilter({ selectedExamTypes: next });
+      return next;
+    });
   };
 
   const handleSelectAll = () => {
@@ -125,8 +136,79 @@ export default function BatchProcess() {
   };
 
   const handleBatchPassConfirm = () => {
-    applyBatchPass();
+    const ids = [...selectedTaskIds];
     setShowPassModal(false);
+
+    let success = 0;
+    let failed = 0;
+    const total = ids.length;
+    const firstPatient = tasks.find((t) => t.taskId === ids[0])?.patient.name ?? '批量';
+
+    taskStoreActions.showTopBanner({
+      status: 'writing',
+      taskId: ids[0],
+      patientName: `${firstPatient} 等${total}例`,
+      progress: 0,
+      message: '批量写入初始化...',
+      isBatch: true,
+      batchSuccess: 0,
+      batchFailed: 0,
+    });
+
+    const processNext = (index: number) => {
+      if (index >= ids.length) {
+        setTimeout(() => {
+          taskStoreActions.showTopBanner({
+            status: success > 0 ? 'success' : 'failed',
+            taskId: ids[0],
+            patientName: `${firstPatient} 等${total}例`,
+            progress: 100,
+            message: `批量写入完成`,
+            isBatch: true,
+            batchSuccess: success,
+            batchFailed: failed,
+            durationSeconds: Math.max(1, Math.round(total * 3.5)),
+          });
+        }, 500);
+        return;
+      }
+
+      const tid = ids[index];
+      const startedAt = Date.now();
+      taskStoreActions.startWriteTask(tid);
+
+      setTimeout(() => taskStoreActions.updateWriteProgress(tid, 25, '正在索引序列…'), 300);
+      setTimeout(() => taskStoreActions.updateWriteProgress(tid, 50, '正在结构化报告…'), 800);
+      setTimeout(() => taskStoreActions.updateWriteProgress(tid, 75, '正在写入归档…'), 1300);
+      setTimeout(() => {
+        const isOk = Math.random() < 0.9;
+        const dur = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        if (isOk) {
+          success++;
+          const req = `BATCH-${Date.now()}-${index}`;
+          taskStoreActions.completeWriteTask(tid, req, dur);
+        } else {
+          failed++;
+          taskStoreActions.failWriteTask(tid, 'PACS 连接异常');
+        }
+
+        const overallProgress = Math.round(((index + 1) / total) * 100);
+        taskStoreActions.showTopBanner({
+          status: 'writing',
+          taskId: ids[0],
+          patientName: `${firstPatient} 等${total}例`,
+          progress: overallProgress,
+          message: `正在写入第 ${index + 1}/${total} 例 (成功${success}/失败${failed})`,
+          isBatch: true,
+          batchSuccess: success,
+          batchFailed: failed,
+        });
+
+        setTimeout(() => processNext(index + 1), 400);
+      }, 1800);
+    };
+
+    setTimeout(() => processNext(0), 300);
   };
 
   const handleBatchRejectConfirm = () => {
@@ -178,7 +260,10 @@ export default function BatchProcess() {
                 })}
                 {selectedExamTypes.length > 0 && (
                   <button
-                    onClick={() => setSelectedExamTypes([])}
+                    onClick={() => {
+                      setSelectedExamTypes([]);
+                      setBatchFilter({ selectedExamTypes: [] });
+                    }}
                     className="px-2 py-1.5 rounded-sm text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     清空
@@ -201,7 +286,11 @@ export default function BatchProcess() {
                   max={1}
                   step={0.05}
                   value={minConfidence}
-                  onChange={(e) => setMinConfidence(Number(e.target.value))}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setMinConfidence(val);
+                    setBatchFilter({ minConfidence: val });
+                  }}
                   className="flex-1 h-2 bg-zinc-800 rounded-sm appearance-none cursor-pointer accent-medical-500"
                 />
                 <span className="text-sm font-mono tabular-nums text-medical-400 w-12 text-right">
@@ -216,7 +305,11 @@ export default function BatchProcess() {
                 <input
                   type="checkbox"
                   checked={noSignificantChange}
-                  onChange={(e) => setNoSignificantChange(e.target.checked)}
+                  onChange={(e) => {
+                    const val = e.target.checked;
+                    setNoSignificantChange(val);
+                    setBatchFilter({ noSignificantChange: val });
+                  }}
                   className="w-4 h-4 rounded-sm accent-medical-500 bg-zinc-800 border-zinc-700"
                 />
                 <span className="text-sm text-zinc-300">仅显示无显著变化的任务</span>
@@ -225,7 +318,11 @@ export default function BatchProcess() {
                 <input
                   type="checkbox"
                   checked={onlyNormalPriority}
-                  onChange={(e) => setOnlyNormalPriority(e.target.checked)}
+                  onChange={(e) => {
+                    const val = e.target.checked;
+                    setOnlyNormalPriority(val);
+                    setBatchFilter({ onlyNormalPriority: val });
+                  }}
                   className="w-4 h-4 rounded-sm accent-medical-500 bg-zinc-800 border-zinc-700"
                 />
                 <span className="text-sm text-zinc-300">仅显示普通优先级</span>
@@ -241,7 +338,11 @@ export default function BatchProcess() {
               <div className="relative">
                 <select
                   value={timeRange}
-                  onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+                  onChange={(e) => {
+                    const val = e.target.value as TimeRange;
+                    setTimeRange(val);
+                    setBatchFilter({ timeRange: val });
+                  }}
                   className="appearance-none bg-zinc-800/50 border border-zinc-700 text-sm text-zinc-200 pl-3 pr-8 py-1.5 rounded-sm focus:outline-none focus:border-medical-500 cursor-pointer"
                 >
                   {TIME_RANGES.map((r) => (
