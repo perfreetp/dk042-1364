@@ -11,12 +11,14 @@ import {
   Shield,
   Clock,
   ChevronRight,
+  ListTodo,
 } from 'lucide-react';
 import { useTaskStore } from '@/stores/useTaskStore';
-import { useBatchStore } from '@/stores/useBatchStore';
+import { useBatchStore, isInTimeRange } from '@/stores/useBatchStore';
 import { usePreferenceStore } from '@/stores/usePreferenceStore';
 import type { ExamTask, ExamType, RejectTemplate } from '@/types';
 import { cn, formatConfidence, formatDateTime, formatSlaRemaining } from '@/utils';
+import BatchRunDetailDrawer from '@/components/batch/BatchRunDetailDrawer';
 
 const EXAM_TYPES: ExamType[] = ['CT', 'MR', 'DR', 'US', 'DSA', 'MG'];
 
@@ -28,24 +30,6 @@ const TIME_RANGES = [
 ] as const;
 
 type TimeRange = (typeof TIME_RANGES)[number]['value'];
-
-function isInTimeRange(examTime: string, range: TimeRange): boolean {
-  if (range === 'all') return true;
-  const now = new Date();
-  const exam = new Date(examTime);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const diffDays = Math.floor((startOfToday.getTime() - exam.getTime()) / (1000 * 60 * 60 * 24));
-  switch (range) {
-    case 'today':
-      return diffDays === 0;
-    case '3d':
-      return diffDays <= 2;
-    case '7d':
-      return diffDays <= 6;
-    default:
-      return true;
-  }
-}
 
 export default function BatchProcess() {
   const tasks = useTaskStore((s) => s.tasks);
@@ -68,6 +52,8 @@ export default function BatchProcess() {
     applyBatchReject,
     setBatchFilter,
     batchFilter,
+    triggerBatchRun,
+    openBatchDetailDrawer,
   } = useBatchStore();
 
   const [selectedExamTypes, setSelectedExamTypes] = useState<ExamType[]>(batchFilter.selectedExamTypes);
@@ -138,77 +124,7 @@ export default function BatchProcess() {
   const handleBatchPassConfirm = () => {
     const ids = [...selectedTaskIds];
     setShowPassModal(false);
-
-    let success = 0;
-    let failed = 0;
-    const total = ids.length;
-    const firstPatient = tasks.find((t) => t.taskId === ids[0])?.patient.name ?? '批量';
-
-    taskStoreActions.showTopBanner({
-      status: 'writing',
-      taskId: ids[0],
-      patientName: `${firstPatient} 等${total}例`,
-      progress: 0,
-      message: '批量写入初始化...',
-      isBatch: true,
-      batchSuccess: 0,
-      batchFailed: 0,
-    });
-
-    const processNext = (index: number) => {
-      if (index >= ids.length) {
-        setTimeout(() => {
-          taskStoreActions.showTopBanner({
-            status: success > 0 ? 'success' : 'failed',
-            taskId: ids[0],
-            patientName: `${firstPatient} 等${total}例`,
-            progress: 100,
-            message: `批量写入完成`,
-            isBatch: true,
-            batchSuccess: success,
-            batchFailed: failed,
-            durationSeconds: Math.max(1, Math.round(total * 3.5)),
-          });
-        }, 500);
-        return;
-      }
-
-      const tid = ids[index];
-      const startedAt = Date.now();
-      taskStoreActions.startWriteTask(tid);
-
-      setTimeout(() => taskStoreActions.updateWriteProgress(tid, 25, '正在索引序列…'), 300);
-      setTimeout(() => taskStoreActions.updateWriteProgress(tid, 50, '正在结构化报告…'), 800);
-      setTimeout(() => taskStoreActions.updateWriteProgress(tid, 75, '正在写入归档…'), 1300);
-      setTimeout(() => {
-        const isOk = Math.random() < 0.9;
-        const dur = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        if (isOk) {
-          success++;
-          const req = `BATCH-${Date.now()}-${index}`;
-          taskStoreActions.completeWriteTask(tid, req, dur);
-        } else {
-          failed++;
-          taskStoreActions.failWriteTask(tid, 'PACS 连接异常');
-        }
-
-        const overallProgress = Math.round(((index + 1) / total) * 100);
-        taskStoreActions.showTopBanner({
-          status: 'writing',
-          taskId: ids[0],
-          patientName: `${firstPatient} 等${total}例`,
-          progress: overallProgress,
-          message: `正在写入第 ${index + 1}/${total} 例 (成功${success}/失败${failed})`,
-          isBatch: true,
-          batchSuccess: success,
-          batchFailed: failed,
-        });
-
-        setTimeout(() => processNext(index + 1), 400);
-      }, 1800);
-    };
-
-    setTimeout(() => processNext(0), 300);
+    triggerBatchRun(ids);
   };
 
   const handleBatchRejectConfirm = () => {
@@ -367,14 +283,25 @@ export default function BatchProcess() {
               </div>
               <div className="text-xs text-zinc-500">符合条件 / 待审总数</div>
             </div>
-            <button
-              onClick={selectAllMatching}
-              disabled={filteredTasks.length === 0}
-              className="btn-primary flex items-center gap-2 w-full lg:w-auto justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>一键匹配</span>
-            </button>
+            <div className="flex flex-col gap-2 w-full lg:w-auto">
+              <button
+                onClick={selectAllMatching}
+                disabled={filteredTasks.length === 0}
+                className="btn-primary flex items-center gap-2 w-full lg:w-auto justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>一键匹配 {filteredTasks.length} 例</span>
+              </button>
+              {selectedTaskIds.length > 0 && (
+                <button
+                  onClick={openBatchDetailDrawer}
+                  className="btn-ghost flex items-center gap-2 justify-center text-xs"
+                >
+                  <ListTodo className="w-3.5 h-3.5" />
+                  <span>批次详情</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -622,6 +549,8 @@ export default function BatchProcess() {
           </div>
         </div>
       )}
+
+      <BatchRunDetailDrawer />
     </div>
   );
 }

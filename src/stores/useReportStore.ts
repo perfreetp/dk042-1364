@@ -5,7 +5,6 @@ import type {
   RevisionRecord,
 } from '../types';
 import { generateMockSuggestions } from '../mock/data';
-import { useTaskStore } from './useTaskStore';
 
 const DRAFT_SENTENCES_KEY = 'radreview:draft-sentences';
 const DRAFT_TASKS_KEY = 'radreview:drafts';
@@ -20,6 +19,7 @@ interface ReportState {
   getFinalReportText: () => string;
   saveDraft: (taskId: string) => string;
   hasDraft: (taskId: string) => boolean;
+  clearDraft: (taskId: string) => void;
 }
 
 function generateRevisionId(): string {
@@ -75,6 +75,62 @@ function markTaskHasDraft(taskId: string, savedAt: string): void {
   }
 }
 
+function unmarkTaskHasDraft(taskId: string): void {
+  try {
+    const raw = localStorage.getItem(DRAFT_TASKS_KEY);
+    if (!raw) return;
+    const all: Record<string, { savedAt: string }> = JSON.parse(raw);
+    delete all[taskId];
+    localStorage.setItem(DRAFT_TASKS_KEY, JSON.stringify(all));
+  } catch (_e) {
+    // ignore
+  }
+}
+
+function removeDraftSentences(taskId: string): void {
+  try {
+    const raw = localStorage.getItem(DRAFT_SENTENCES_KEY);
+    if (!raw) return;
+    const all: Record<string, SuggestionSentence[]> = JSON.parse(raw);
+    delete all[taskId];
+    localStorage.setItem(DRAFT_SENTENCES_KEY, JSON.stringify(all));
+  } catch (_e) {
+    // ignore
+  }
+}
+
+function saveDraftToStorage(taskId: string, sentences: SuggestionSentence[]): string {
+  persistDraftSentences(taskId, sentences);
+  const savedAt = new Date().toISOString();
+  markTaskHasDraft(taskId, savedAt);
+  return savedAt;
+}
+
+function syncTaskDraftStatus(taskId: string, savedAt: string): void {
+  try {
+    const { useTaskStore } = require('./useTaskStore');
+    useTaskStore.getState().setTaskHasDraft(taskId, savedAt);
+  } catch (_e) {
+    // ignore
+  }
+}
+
+function recordSentenceAuditEvent(
+  taskId: string,
+  event: {
+    type: 'sentence-decision-changed' | 'sentence-edited' | 'draft-saved';
+    summary: string;
+    details?: Record<string, unknown>;
+  }
+): void {
+  try {
+    const { useTaskStore } = require('./useTaskStore');
+    useTaskStore.getState().recordAuditEvent(taskId, event);
+  } catch (_e) {
+    // ignore
+  }
+}
+
 export const useReportStore = create<ReportState>((set, get) => ({
   sentences: [],
   currentTaskId: null,
@@ -85,13 +141,17 @@ export const useReportStore = create<ReportState>((set, get) => ({
     set({ sentences, currentTaskId: taskId });
   },
 
-  updateSentenceDecision: (sentenceId, decision) =>
-    set((state) => ({
-      sentences: state.sentences.map((s) => {
+  updateSentenceDecision: (sentenceId, decision) => {
+    let changedSentence: SuggestionSentence | null = null;
+    let oldDecision: SentenceDecision | null = null;
+
+    set((state) => {
+      const updatedSentences = state.sentences.map((s) => {
         if (s.id !== sentenceId) return s;
 
         const previousDecision = s.decision;
         const previousContent = s.editedContent ?? s.content;
+        oldDecision = previousDecision;
 
         const revisionHistory = [...(s.revisionHistory ?? [])];
 
@@ -117,23 +177,51 @@ export const useReportStore = create<ReportState>((set, get) => ({
           }
         }
 
-        return {
+        const updated = {
           ...s,
           decision,
           modifiedAt: new Date().toISOString(),
           modifiedBy: '当前用户',
           revisionHistory,
         };
-      }),
-    })),
+        changedSentence = updated;
+        return updated;
+      });
 
-  editSentenceContent: (sentenceId, newContent) =>
-    set((state) => ({
-      sentences: state.sentences.map((s) => {
+      if (state.currentTaskId) {
+        const savedAt = saveDraftToStorage(state.currentTaskId, updatedSentences);
+        syncTaskDraftStatus(state.currentTaskId, savedAt);
+      }
+
+      return { sentences: updatedSentences };
+    });
+
+    const { currentTaskId } = get();
+    if (currentTaskId && changedSentence && oldDecision !== null && oldDecision !== decision) {
+      recordSentenceAuditEvent(currentTaskId, {
+        type: 'sentence-decision-changed',
+        summary: `语句决策变更：${oldDecision} → ${decision}`,
+        details: {
+          sentenceId,
+          oldDecision,
+          newDecision: decision,
+          content: changedSentence.editedContent ?? changedSentence.content,
+        },
+      });
+    }
+  },
+
+  editSentenceContent: (sentenceId, newContent) => {
+    let changedSentence: SuggestionSentence | null = null;
+    let beforeText = '';
+    let afterText = '';
+
+    set((state) => {
+      const updatedSentences = state.sentences.map((s) => {
         if (s.id !== sentenceId) return s;
 
-        const beforeText = s.editedContent ?? s.content;
-        const afterText = newContent;
+        beforeText = s.editedContent ?? s.content;
+        afterText = newContent;
 
         const revisionHistory = [...(s.revisionHistory ?? [])];
 
@@ -147,16 +235,39 @@ export const useReportStore = create<ReportState>((set, get) => ({
           }
         }
 
-        return {
+        const updated = {
           ...s,
-          decision: 'edit',
+          decision: 'edit' as const,
           editedContent: newContent,
           modifiedAt: new Date().toISOString(),
           modifiedBy: '当前用户',
           revisionHistory,
         };
-      }),
-    })),
+        changedSentence = updated;
+        return updated;
+      });
+
+      if (state.currentTaskId) {
+        const savedAt = saveDraftToStorage(state.currentTaskId, updatedSentences);
+        syncTaskDraftStatus(state.currentTaskId, savedAt);
+      }
+
+      return { sentences: updatedSentences };
+    });
+
+    const { currentTaskId } = get();
+    if (currentTaskId && changedSentence && beforeText !== afterText) {
+      recordSentenceAuditEvent(currentTaskId, {
+        type: 'sentence-edited',
+        summary: '语句内容已编辑',
+        details: {
+          sentenceId,
+          oldValue: beforeText,
+          newValue: afterText,
+        },
+      });
+    }
+  },
 
   getFinalReportText: () => {
     const { sentences } = get();
@@ -208,10 +319,25 @@ export const useReportStore = create<ReportState>((set, get) => ({
 
   saveDraft: (taskId) => {
     const { sentences } = get();
-    persistDraftSentences(taskId, sentences);
-    const savedAt = new Date().toISOString();
-    markTaskHasDraft(taskId, savedAt);
-    useTaskStore.getState().setTaskHasDraft(taskId, savedAt);
+    const savedAt = saveDraftToStorage(taskId, sentences);
+    syncTaskDraftStatus(taskId, savedAt);
+
+    const keepCount = sentences.filter((s) => s.decision === 'keep').length;
+    const removeCount = sentences.filter((s) => s.decision === 'remove').length;
+    const editCount = sentences.filter((s) => s.decision === 'edit').length;
+
+    recordSentenceAuditEvent(taskId, {
+      type: 'draft-saved',
+      summary: `保存草稿，共${sentences.length}条语句，其中保留${keepCount}/删除${removeCount}/修改${editCount}`,
+      details: {
+        savedAt,
+        totalCount: sentences.length,
+        keepCount,
+        removeCount,
+        editCount,
+      },
+    });
+
     return savedAt;
   },
 
@@ -224,6 +350,23 @@ export const useReportStore = create<ReportState>((set, get) => ({
     } catch (_e) {
       return false;
     }
+  },
+
+  clearDraft: (taskId) => {
+    unmarkTaskHasDraft(taskId);
+    removeDraftSentences(taskId);
+    try {
+      const { useTaskStore } = require('./useTaskStore');
+      useTaskStore.getState().clearTaskHasDraft(taskId);
+    } catch (_e) {
+      // ignore
+    }
+    set((state) => {
+      if (state.currentTaskId === taskId) {
+        return { sentences: generateMockSuggestions(taskId) };
+      }
+      return {};
+    });
   },
 }));
 

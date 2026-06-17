@@ -16,17 +16,17 @@ import {
   Filter,
   SortAsc,
   RotateCcw,
+  FileText,
 } from 'lucide-react';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { usePreferenceStore } from '@/stores/usePreferenceStore';
 import { useSlaTimer } from '@/hooks/useSlaTimer';
 import * as utils from '@/utils';
-import type { ExamTask, ExamType, PriorityLevel, SortBy, PacsWriteStatus } from '@/types';
-
-type ExamCategory = 'all' | 'CT' | 'MR' | 'DR' | 'US' | 'other';
+import type { ExamTask, ExamType, PriorityLevel, SortBy, PacsWriteStatus, ExamCategory as ExamCategoryType } from '@/types';
+import TaskDetailDrawer from '@/components/tasks/TaskDetailDrawer';
 
 interface ExamCategoryCard {
-  key: ExamCategory;
+  key: ExamCategoryType;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   types: ExamType[];
@@ -155,8 +155,10 @@ export default function TaskList() {
 
   const tasks = useTaskStore((s) => s.tasks);
   const filterExamType = useTaskStore((s) => s.filterExamType);
+  const filterExamCategory = useTaskStore((s) => s.filterExamCategory);
   const sortBy = useTaskStore((s) => s.sortBy);
   const setFilter = useTaskStore((s) => s.setFilter);
+  const setFilterCategory = useTaskStore((s) => s.setFilterCategory);
   const setSort = useTaskStore((s) => s.setSort);
   const setSearch = useTaskStore((s) => s.setSearch);
   const selectTask = useTaskStore((s) => s.selectTask);
@@ -164,6 +166,7 @@ export default function TaskList() {
   const rejectTask = useTaskStore((s) => s.rejectTask);
   const retryWriteTask = useTaskStore((s) => s.retryWriteTask);
   const getFilteredAndSortedTasks = useTaskStore((s) => s.getFilteredAndSortedTasks);
+  const openDetailDrawer = useTaskStore((s) => s.openDetailDrawer);
 
   const preferences = usePreferenceStore((s) => s.preferences);
 
@@ -179,7 +182,7 @@ export default function TaskList() {
     return () => clearTimeout(t);
   }, [searchInput, setSearch]);
 
-  const getCategoryKey = useCallback((type: ExamType): ExamCategory => {
+  const getCategoryKey = useCallback((type: ExamType): ExamCategoryType => {
     if (type === 'DSA' || type === 'MG') return 'other';
     return type;
   }, []);
@@ -188,7 +191,7 @@ export default function TaskList() {
     const now = new Date();
     const dangerMs = preferences.slaDangerThresholdHours * 60 * 60 * 1000;
 
-    const stats: Record<ExamCategory, { total: number; timeout: number }> = {
+    const stats: Record<ExamCategoryType, { total: number; timeout: number }> = {
       all: { total: 0, timeout: 0 },
       CT: { total: 0, timeout: 0 },
       MR: { total: 0, timeout: 0 },
@@ -225,31 +228,30 @@ export default function TaskList() {
     }
 
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1;
     const rangeMs: Record<DateRangeValue, number> = {
       today: 0,
       '3d': 2 * 24 * 60 * 60 * 1000,
       '7d': 6 * 24 * 60 * 60 * 1000,
     };
-    const cutoff = todayStart - rangeMs[dateRange];
-    list = list.filter((t) => new Date(t.examTime).getTime() >= cutoff);
+    const cutoff = startOfToday.getTime() - rangeMs[dateRange];
+    list = list.filter((t) => {
+      const tTime = new Date(t.examTime).getTime();
+      return tTime >= cutoff && tTime <= todayEnd;
+    });
 
     return list;
   }, [getFilteredAndSortedTasks, priorityFilter, dateRange]);
 
-  const selectedCategory: ExamCategory = useMemo(() => {
+  const selectedCategory: ExamCategoryType = useMemo(() => {
+    if (filterExamCategory !== 'all') return filterExamCategory;
     if (filterExamType === 'all') return 'all';
     return getCategoryKey(filterExamType);
-  }, [filterExamType, getCategoryKey]);
+  }, [filterExamType, filterExamCategory, getCategoryKey]);
 
-  const handleCategoryClick = (category: ExamCategory) => {
-    if (category === 'all') {
-      setFilter('all');
-    } else if (category === 'other') {
-      setFilter('DSA');
-    } else {
-      setFilter(category as ExamType);
-    }
+  const handleCategoryClick = (category: ExamCategoryType) => {
+    setFilterCategory(category);
   };
 
   const handleRowDoubleClick = (task: ExamTask) => {
@@ -403,7 +405,7 @@ export default function TaskList() {
                 <th className="px-3 py-3 text-left font-medium w-36">SLA倒计时</th>
                 <th className="px-3 py-3 text-left font-medium w-20">优先级</th>
                 <th className="px-3 py-3 text-left font-medium w-28">写入状态</th>
-                <th className="px-3 py-3 text-right font-medium w-52">操作</th>
+                <th className="px-3 py-3 text-right font-medium w-[220px]">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
@@ -511,6 +513,15 @@ export default function TaskList() {
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
+                          onClick={() => openDetailDrawer(task.taskId)}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-sm text-xs font-medium bg-zinc-800/50 text-zinc-300 border border-zinc-700 hover:bg-zinc-700/60 hover:border-zinc-600 transition-colors"
+                          title="任务详情"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          详情
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => passTask(task.taskId)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/50 hover:bg-green-800/40 transition-colors"
                         >
@@ -552,6 +563,8 @@ export default function TaskList() {
           </table>
         </div>
       </div>
+
+      <TaskDetailDrawer />
     </div>
   );
 }
